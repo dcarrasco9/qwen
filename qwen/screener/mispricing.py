@@ -180,8 +180,8 @@ class MispricingScanner:
                 continue
 
             # Use mid prices
-            call_mid = (call.bid + call.ask) / 2 if call.bid and call.ask else call.last_price
-            put_mid = (put.bid + put.ask) / 2 if put.bid and put.ask else put.last_price
+            call_mid = (call.bid + call.ask) / 2 if call.bid and call.ask else getattr(call, 'last', None) or getattr(call, 'last_price', None)
+            put_mid = (put.bid + put.ask) / 2 if put.bid and put.ask else getattr(put, 'last', None) or getattr(put, 'last_price', None)
 
             if not call_mid or not put_mid:
                 continue
@@ -250,7 +250,7 @@ class MispricingScanner:
             iv_ratio = iv / realized_vol if realized_vol > 0 else 1
 
             # Get mid price
-            mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else opt.last_price
+            mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else getattr(opt, 'last', None) or getattr(opt, 'last_price', None)
             if not mid:
                 continue
 
@@ -351,7 +351,7 @@ class MispricingScanner:
 
             # Flag significant deviations
             if abs(iv_deviation) > 0.20:  # 20% deviation from expected
-                mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else opt.last_price
+                mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else getattr(opt, 'last', None) or getattr(opt, 'last_price', None)
                 if not mid:
                     continue
 
