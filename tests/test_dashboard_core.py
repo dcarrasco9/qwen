@@ -31,3 +31,11 @@ def test_summarize_metrics_counts_and_average():
     assert metrics["high_iv"] == 1
     assert metrics["low_iv"] == 2
     assert metrics["symbols"] == 4
+
+
+def test_summarize_metrics_empty_df():
+    df = pd.DataFrame()
+    metrics = summarize_metrics(df)
+
+    assert metrics["symbols"] == 0
+    assert metrics["avg_change"] == 0.0

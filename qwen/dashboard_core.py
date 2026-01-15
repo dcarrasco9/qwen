@@ -16,6 +16,15 @@ def calculate_regime(iv_percentile: float) -> str:
 
 
 def summarize_metrics(df: pd.DataFrame) -> dict[str, float]:
+    if df.empty:
+        return {
+            "gainers": 0,
+            "losers": 0,
+            "avg_change": 0.0,
+            "high_iv": 0,
+            "low_iv": 0,
+            "symbols": 0,
+        }
     gainers = int((df["1D %"] > 0).sum())
     losers = int((df["1D %"] < 0).sum())
     avg_change = float(df["1D %"].mean()) if not df.empty else 0.0
