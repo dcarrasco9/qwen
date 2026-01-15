@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen"
+version = "0.1.0"
+description = "Financial modeling toolkit for backtesting, options pricing, and paper trading"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Dakota Carrasco"}
+]
+dependencies = [
+    "yfinance>=0.2.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.optional-dependencies]
+alpaca = ["alpaca-py>=0.30.0"]
+schwab = ["schwab-py>=1.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.0.0",
+]
+all = ["qwen[alpaca,schwab,dev]"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["qwen*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
