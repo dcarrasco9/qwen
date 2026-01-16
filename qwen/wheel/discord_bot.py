@@ -32,7 +32,7 @@ class WheelBot(commands.Bot):
 
     def __init__(self):
         intents = discord.Intents.default()
-        intents.message_content = True
+        # Note: message_content intent not needed for slash commands
 
         super().__init__(
             command_prefix="!",
