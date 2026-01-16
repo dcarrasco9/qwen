@@ -249,7 +249,7 @@ class WheelEngine:
                 limit_price=contract.bid,  # Use bid for faster fill
             )
 
-            if order.status in (OrderStatus.FILLED, OrderStatus.ACCEPTED, OrderStatus.PENDING):
+            if order.status in (OrderStatus.FILLED, OrderStatus.ACCEPTED, OrderStatus.PENDING, OrderStatus.NEW):
                 # Update position state
                 position.active_option = OptionInfo(
                     option_type="put",
@@ -508,7 +508,7 @@ class WheelEngine:
                 limit_price=contract.bid,
             )
 
-            if order.status in (OrderStatus.FILLED, OrderStatus.ACCEPTED, OrderStatus.PENDING):
+            if order.status in (OrderStatus.FILLED, OrderStatus.ACCEPTED, OrderStatus.PENDING, OrderStatus.NEW):
                 position.active_option = OptionInfo(
                     option_type="call",
                     strike=contract.strike,
