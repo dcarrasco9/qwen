@@ -23,13 +23,20 @@ dependencies = [
 [project.optional-dependencies]
 alpaca = ["alpaca-py>=0.30.0"]
 schwab = ["schwab-py>=1.0.0"]
+wheel-automation = [
+    "apscheduler>=3.10.0",
+    "pyyaml>=6.0",
+    "click>=8.0.0",
+    "python-dotenv>=1.0.0",
+]
+discord = ["discord-webhook>=1.0.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "jupyter>=1.0.0",
     "ipykernel>=6.0.0",
 ]
-all = ["qwen[alpaca,schwab,dev]"]
+all = ["qwen[alpaca,schwab,wheel-automation,discord,dev]"]
 
 [tool.setuptools.packages.find]
 where = ["."]

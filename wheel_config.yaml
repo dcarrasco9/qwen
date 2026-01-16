@@ -1,0 +1,63 @@
+# Wheel Strategy Configuration
+# =============================
+
+# Symbols to run wheel strategy on
+symbols:
+  - symbol: SSYS
+    enabled: true
+    target_put_delta: 0.25    # 25-delta puts
+    target_call_delta: 0.30   # 30-delta calls
+    min_dte: 25               # Minimum days to expiration
+    max_dte: 45               # Maximum days to expiration
+    min_premium: 0.30         # Minimum premium per share
+    max_positions: 1          # Max concurrent wheels on this symbol
+
+  - symbol: RKLB
+    enabled: true
+    target_put_delta: 0.20
+    target_call_delta: 0.25
+    min_dte: 30
+    max_dte: 45
+    min_premium: 0.25
+    max_positions: 1
+
+  - symbol: ONDS
+    enabled: false            # Disabled by default - low volume options
+    target_put_delta: 0.25
+    target_call_delta: 0.30
+    min_dte: 30
+    max_dte: 45
+    min_premium: 0.20
+    max_positions: 1
+
+# Global settings
+global:
+  check_interval_minutes: 60  # How often to check positions
+  market_hours_only: true     # Only execute during market hours
+  max_total_capital: 50000    # Maximum capital to deploy
+  paper_mode: true            # Start with paper trading!
+
+# Notification settings
+notifications:
+  console:
+    enabled: true
+    level: info               # debug, info, warning, error
+
+  discord:
+    enabled: false
+    webhook_url: ${DISCORD_WEBHOOK_URL}
+
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    username: ${EMAIL_USERNAME}
+    password: ${EMAIL_PASSWORD}
+    to_address: your@email.com
+
+# Safety settings
+safety:
+  max_loss_per_position: 500  # Max loss before closing position
+  stop_loss_percent: 0.50     # Close if option doubles against us
+  min_buying_power_reserve: 5000  # Always keep this much cash
+  roll_dte_threshold: 5       # Consider rolling at this DTE
