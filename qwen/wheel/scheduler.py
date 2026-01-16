@@ -195,6 +195,188 @@ class WheelScheduler:
             active_count=summary.get("active_positions", 0),
         )
 
+    def _send_morning_briefing(self):
+        """Send pre-market morning briefing."""
+        logger.info("Sending morning briefing...")
+
+        try:
+            from qwen.wheel.strike_selector import StrikeSelector
+            from qwen.data.yahoo import YahooDataProvider
+
+            selector = StrikeSelector()
+            provider = YahooDataProvider()
+
+            # Get current positions
+            summary = self.engine.get_status_summary()
+            positions = self.state_manager.get_all_positions()
+
+            # Build briefing data
+            briefing_lines = []
+            opportunities = []
+
+            # Check each enabled symbol
+            for sym_config in self.config.symbols:
+                if not sym_config.enabled:
+                    continue
+
+                symbol = sym_config.symbol
+                pos = positions.get(symbol)
+
+                try:
+                    quote = provider.get_quote(symbol)
+                    price = quote.last
+
+                    if pos and pos.state.value != "IDLE":
+                        # Active position info
+                        if pos.active_option:
+                            opt = pos.active_option
+                            briefing_lines.append(
+                                f"**{symbol}**: ${price:.2f} | {opt.option_type.upper()} ${opt.strike:.2f} | {opt.days_to_expiration} DTE"
+                            )
+                    else:
+                        # Analyze opportunity
+                        analysis = selector.analyze_wheel_opportunity(symbol)
+                        if analysis.get("put_opportunity"):
+                            put = analysis["put_opportunity"]
+                            opportunities.append(
+                                f"**{symbol}**: ${price:.2f} | Put ${put['strike']:.2f} @ ${put['premium']:.2f} ({put['annualized_roi']:.0%} ann.)"
+                            )
+                except Exception as e:
+                    logger.warning(f"Error getting data for {symbol}: {e}")
+
+            # Send notification
+            message = "**Active Positions:**\n"
+            if briefing_lines:
+                message += "\n".join(briefing_lines)
+            else:
+                message += "None\n"
+
+            message += "\n\n**Opportunities:**\n"
+            if opportunities:
+                message += "\n".join(opportunities)
+            else:
+                message += "No new opportunities"
+
+            self.notifications.notify(
+                message=message,
+                level=NotificationLevel.INFO,
+                title="Morning Briefing",
+                data={
+                    "Active Positions": summary.get("active_positions", 0),
+                    "Total Premium": f"${summary.get('total_premium_collected', 0):.2f}",
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Error sending morning briefing: {e}")
+
+    def _send_weekly_report(self):
+        """Send weekly P&L report on Sunday evening."""
+        logger.info("Sending weekly P&L report...")
+
+        try:
+            summary = self.engine.get_status_summary()
+            positions = self.state_manager.get_all_positions()
+            trades = self.state_manager.export_trades()
+
+            # Calculate weekly stats
+            total_premium = sum(p.total_premium_collected for p in positions.values())
+            total_cycles = sum(p.cycle_count for p in positions.values())
+
+            # Count trades this week (simplified - just count recent)
+            recent_trades = trades[-20:] if trades else []
+
+            # Build report
+            position_summary = []
+            for symbol, pos in positions.items():
+                if pos.total_premium_collected > 0 or pos.state.value != "IDLE":
+                    position_summary.append(
+                        f"**{symbol}**: ${pos.total_premium_collected:.2f} collected, {pos.cycle_count} cycles"
+                    )
+
+            message = "**Weekly Performance Summary**\n\n"
+            if position_summary:
+                message += "\n".join(position_summary)
+            else:
+                message += "No active positions this week"
+
+            self.notifications.notify(
+                message=message,
+                level=NotificationLevel.INFO,
+                title="Weekly Wheel Report",
+                data={
+                    "Total Premium": f"${total_premium:.2f}",
+                    "Cycles Completed": total_cycles,
+                    "Active Positions": summary.get("active_positions", 0),
+                    "Recent Trades": len(recent_trades),
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Error sending weekly report: {e}")
+
+    def _check_iv_alerts(self):
+        """Check for IV spike/crush alerts."""
+        logger.debug("Checking IV levels...")
+
+        try:
+            from qwen.screener.volatility import VolatilityAnalyzer
+            from qwen.data.yahoo import YahooDataProvider
+
+            provider = YahooDataProvider()
+            analyzer = VolatilityAnalyzer(provider)
+
+            alerts = []
+
+            for sym_config in self.config.symbols:
+                if not sym_config.enabled:
+                    continue
+
+                symbol = sym_config.symbol
+
+                try:
+                    regime = analyzer.analyze_symbol(symbol)
+
+                    # Alert if IV percentile is extreme
+                    if regime.iv_percentile is not None:
+                        if regime.iv_percentile >= 80:
+                            alerts.append({
+                                "symbol": symbol,
+                                "iv_percentile": regime.iv_percentile,
+                                "regime": regime.vol_regime,
+                                "alert_type": "HIGH_IV",
+                                "message": f"IV Rank {regime.iv_percentile:.0f}% - consider selling premium",
+                            })
+                        elif regime.iv_percentile <= 20:
+                            alerts.append({
+                                "symbol": symbol,
+                                "iv_percentile": regime.iv_percentile,
+                                "regime": regime.vol_regime,
+                                "alert_type": "LOW_IV",
+                                "message": f"IV Rank {regime.iv_percentile:.0f}% - consider buying options",
+                            })
+
+                except Exception as e:
+                    logger.warning(f"Error analyzing IV for {symbol}: {e}")
+
+            # Send alerts
+            for alert in alerts:
+                self.notifications.notify(
+                    message=alert["message"],
+                    level=NotificationLevel.WARNING,
+                    title=f"IV Alert: {alert['symbol']}",
+                    data={
+                        "Symbol": alert["symbol"],
+                        "IV Percentile": f"{alert['iv_percentile']:.0f}%",
+                        "Regime": alert["regime"],
+                    },
+                )
+
+        except ImportError:
+            logger.debug("VolatilityAnalyzer not available, skipping IV alerts")
+        except Exception as e:
+            logger.error(f"Error checking IV alerts: {e}")
+
     def start(self):
         """Start the scheduler daemon."""
         logger.info(
@@ -218,6 +400,30 @@ class WheelScheduler:
             CronTrigger(hour=16, minute=5, timezone=ET),
             id="daily_summary",
             name="Send daily summary",
+        )
+
+        # Schedule morning briefing at 9:00 AM ET (weekdays)
+        self.scheduler.add_job(
+            self._send_morning_briefing,
+            CronTrigger(hour=9, minute=0, day_of_week="mon-fri", timezone=ET),
+            id="morning_briefing",
+            name="Send morning briefing",
+        )
+
+        # Schedule weekly report on Sunday at 6:00 PM ET
+        self.scheduler.add_job(
+            self._send_weekly_report,
+            CronTrigger(hour=18, minute=0, day_of_week="sun", timezone=ET),
+            id="weekly_report",
+            name="Send weekly P&L report",
+        )
+
+        # Schedule IV alerts check every 4 hours during market hours
+        self.scheduler.add_job(
+            self._check_iv_alerts,
+            CronTrigger(hour="9,13,15", minute=30, day_of_week="mon-fri", timezone=ET),
+            id="iv_alerts",
+            name="Check IV alerts",
         )
 
         # Run initial check
