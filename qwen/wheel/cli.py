@@ -293,6 +293,88 @@ if CLICK_AVAILABLE:
         except Exception as e:
             click.secho(f"Error analyzing {symbol}: {e}", fg="red")
 
+    # Discord commands
+    @wheel.group()
+    def discord():
+        """Discord notification commands."""
+        pass
+
+    @discord.command(name="briefing")
+    def discord_briefing():
+        """Send morning briefing to Discord."""
+        from qwen.wheel.discord_reports import DiscordReporter
+
+        click.echo("Sending morning briefing to Discord...")
+        reporter = DiscordReporter()
+        if reporter.send_morning_briefing():
+            click.secho("✓ Morning briefing sent!", fg="green")
+        else:
+            click.secho("✗ Failed to send", fg="red")
+
+    @discord.command(name="summary")
+    def discord_summary():
+        """Send daily summary to Discord."""
+        from qwen.wheel.discord_reports import DiscordReporter
+
+        click.echo("Sending daily summary to Discord...")
+        reporter = DiscordReporter()
+        if reporter.send_daily_summary():
+            click.secho("✓ Daily summary sent!", fg="green")
+        else:
+            click.secho("✗ Failed to send", fg="red")
+
+    @discord.command(name="weekly")
+    def discord_weekly():
+        """Send weekly report to Discord."""
+        from qwen.wheel.discord_reports import DiscordReporter
+
+        click.echo("Sending weekly report to Discord...")
+        reporter = DiscordReporter()
+        if reporter.send_weekly_report():
+            click.secho("✓ Weekly report sent!", fg="green")
+        else:
+            click.secho("✗ Failed to send", fg="red")
+
+    @discord.command(name="analyze")
+    @click.argument("symbol")
+    def discord_analyze(symbol: str):
+        """Send wheel analysis to Discord."""
+        from qwen.wheel.discord_reports import DiscordReporter
+
+        click.echo(f"Sending {symbol} analysis to Discord...")
+        reporter = DiscordReporter()
+        if reporter.send_analysis(symbol):
+            click.secho(f"✓ {symbol} analysis sent!", fg="green")
+        else:
+            click.secho("✗ Failed to send", fg="red")
+
+    @discord.command(name="position")
+    @click.argument("symbol")
+    def discord_position(symbol: str):
+        """Send position update to Discord."""
+        from qwen.wheel.discord_reports import DiscordReporter
+
+        click.echo(f"Sending {symbol} position to Discord...")
+        reporter = DiscordReporter()
+        if reporter.send_position_update(symbol):
+            click.secho(f"✓ {symbol} position sent!", fg="green")
+        else:
+            click.secho("✗ Failed to send", fg="red")
+
+    @discord.command(name="alert")
+    @click.argument("symbol")
+    @click.argument("price", type=float)
+    @click.option("--above", "direction", flag_value="above", help="Alert when price goes above")
+    @click.option("--below", "direction", flag_value="below", default=True, help="Alert when price goes below")
+    def discord_alert(symbol: str, price: float, direction: str):
+        """Add a price alert (sends to Discord when triggered)."""
+        from qwen.wheel.discord_reports import DiscordReporter
+
+        reporter = DiscordReporter()
+        reporter.add_price_alert(symbol, price, direction)
+        click.secho(f"✓ Alert added: {symbol} {direction} ${price:.2f}", fg="green")
+        click.echo("Note: Alerts are checked when the daemon runs")
+
     def main():
         """Entry point for CLI."""
         wheel()
