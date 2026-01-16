@@ -411,6 +411,36 @@ WATCHLIST_2026: list[WatchlistStock] = [
               "BofA PT $100, Scotiabank PT $45. High dilution risk but $3.2B liquidity. "
               "Key catalyst: launch cadence execution and commercial service activation.",
     ),
+    WatchlistStock(
+        ticker="RKLB",
+        name="Rocket Lab USA",
+        sector=Sector.SPACE_SATELLITE,
+        risk_level=RiskLevel.SPECULATIVE,
+        thesis="Leading small satellite launch provider. Electron rocket with proven track record. "
+               "Neutron medium-lift rocket in development. Vertically integrated with spacecraft components.",
+        themes=["Space", "Launch", "Satellite", "Defense"],
+        notes="Competes with SpaceX for small/medium payloads. Growing backlog.",
+    ),
+    WatchlistStock(
+        ticker="ONDS",
+        name="Ondas Holdings",
+        sector=Sector.NETWORKING,
+        risk_level=RiskLevel.SPECULATIVE,
+        thesis="Industrial wireless networking and autonomous drone solutions. "
+               "FullMAX platform for mission-critical IoT. American Robotics subsidiary for drone automation.",
+        themes=["Drones", "Industrial IoT", "Wireless", "Automation"],
+        notes="Small cap, early stage revenue growth.",
+    ),
+    WatchlistStock(
+        ticker="SSYS",
+        name="Stratasys",
+        sector=Sector.DATA_CENTER,
+        risk_level=RiskLevel.SPECULATIVE,
+        thesis="3D printing and additive manufacturing leader. Industrial and healthcare applications. "
+               "Potential beneficiary of reshoring and advanced manufacturing trends.",
+        themes=["3D Printing", "Manufacturing", "Industrial", "Healthcare"],
+        notes="Consolidation in 3D printing space.",
+    ),
 ]
 
 

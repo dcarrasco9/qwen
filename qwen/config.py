@@ -2,7 +2,20 @@
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+# Load .env file from project root
+from dotenv import load_dotenv
+
+# Find and load .env file
+_project_root = Path(__file__).parent.parent
+_env_file = _project_root / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    # Also check current working directory
+    load_dotenv()
 
 
 @dataclass
