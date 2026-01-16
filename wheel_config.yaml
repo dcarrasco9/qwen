@@ -44,7 +44,7 @@ notifications:
     level: info               # debug, info, warning, error
 
   discord:
-    enabled: false
+    enabled: true
     webhook_url: ${DISCORD_WEBHOOK_URL}
 
   email:

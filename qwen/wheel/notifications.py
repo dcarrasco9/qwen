@@ -158,7 +158,10 @@ class DiscordNotifier(NotifierBackend):
             request = Request(
                 self.webhook_url,
                 data=data,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "Qwen-Wheel-Automation/1.0",
+                },
             )
             with urlopen(request, timeout=10) as response:
                 return response.status == 204
