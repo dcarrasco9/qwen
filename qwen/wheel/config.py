@@ -1,7 +1,35 @@
 """
 Wheel Strategy Configuration Loader
 
-Loads configuration from YAML files with environment variable expansion.
+This module provides strategy-specific configuration for the wheel options strategy.
+Configuration is loaded from YAML files with environment variable expansion support.
+
+Note: This is SEPARATE from qwen.config which handles core application configuration
+(API keys, broker settings). This module handles wheel strategy parameters (symbols,
+deltas, DTE ranges, etc.).
+
+Configuration Hierarchy
+-----------------------
+1. qwen.config.Config - Core application config (API keys, defaults)
+2. qwen.wheel.config.WheelConfig - Strategy-specific config (this module)
+
+Usage
+-----
+    from qwen.wheel.config import load_config
+
+    # Load from default locations (wheel_config.yaml in cwd or ~/.qwen/)
+    wheel_config = load_config()
+
+    # Or from a specific path
+    wheel_config = load_config("path/to/config.yaml")
+
+    # Access configuration
+    for symbol_config in wheel_config.symbols:
+        print(f"{symbol_config.symbol}: delta={symbol_config.target_put_delta}")
+
+The configuration file supports environment variable expansion:
+    discord:
+      webhook_url: ${DISCORD_WEBHOOK_URL}
 """
 
 import os

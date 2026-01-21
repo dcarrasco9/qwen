@@ -1,5 +1,6 @@
 """Yahoo Finance data provider using yfinance."""
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -7,6 +8,9 @@ import pandas as pd
 import yfinance as yf
 
 from qwen.data.base import DataProvider, OptionContract, Quote
+from qwen.utils.helpers import safe_float, safe_int
+
+logger = logging.getLogger(__name__)
 
 
 class YahooDataProvider(DataProvider):
@@ -112,18 +116,6 @@ class YahooDataProvider(DataProvider):
 
             contracts = []
 
-            def safe_float(val, default=0.0):
-                """Safely convert to float, handling NaN."""
-                if pd.isna(val):
-                    return default
-                return float(val) if val else default
-
-            def safe_int(val, default=0):
-                """Safely convert to int, handling NaN."""
-                if pd.isna(val):
-                    return default
-                return int(val) if val else default
-
             # Process calls
             for _, row in chain.calls.iterrows():
                 contracts.append(
@@ -163,7 +155,7 @@ class YahooDataProvider(DataProvider):
             return contracts
 
         except Exception as e:
-            print(f"Error fetching options chain: {e}")
+            logger.error(f"Error fetching options chain: {e}")
             return []
 
     def get_risk_free_rate(self) -> float:

@@ -2,20 +2,27 @@
 Options Mispricing Detection
 
 Identifies potential arbitrage and value opportunities in options markets:
-1. Put-Call Parity Violations
+1. Put-Call Parity Violations (using EXECUTABLE prices, not mid)
 2. Implied vs Realized Volatility Discrepancies
 3. Skew Anomalies
 4. Term Structure Opportunities
+
+IMPORTANT: This scanner uses executable prices (bid for sells, ask for buys)
+to filter out false positives caused by wide bid-ask spreads.
 """
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional, Literal
+from typing import Literal, Optional
+
 import numpy as np
 import pandas as pd
 
-from qwen.pricing import BlackScholes
 from qwen.data.base import DataProvider, OptionContract
+from qwen.pricing import BlackScholes
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,19 +41,81 @@ class MispricingOpportunity:
     risk_reward: float
     timestamp: datetime = None
 
+    # New fields for realistic execution analysis
+    executable_edge: float = 0.0  # Edge after accounting for bid-ask spread
+    executable_edge_pct: float = 0.0
+    bid_ask_spread_pct: float = 0.0  # Spread as % of mid price
+    volume: int = 0
+    open_interest: int = 0
+    liquidity_score: float = 0.0  # 0-1 score combining volume, OI, spread
+
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now()
 
     @property
     def is_actionable(self) -> bool:
-        """Check if opportunity meets minimum thresholds."""
-        return abs(self.edge_pct) > 5 and self.confidence > 0.6
+        """
+        Check if opportunity meets minimum thresholds.
+
+        Now requires EXECUTABLE edge to be positive, not just theoretical edge.
+        """
+        return (
+            self.executable_edge_pct > 2.0  # Must have >2% edge after spreads
+            and self.confidence > 0.5
+            and self.liquidity_score > 0.3  # Must be reasonably liquid
+            and self.bid_ask_spread_pct < 20  # Spread must be <20% of mid
+        )
+
+
+def calculate_liquidity_score(
+    volume: int,
+    open_interest: int,
+    bid_ask_spread_pct: float,
+    min_volume: int = 100,
+    min_oi: int = 500,
+) -> float:
+    """
+    Calculate a liquidity score from 0-1.
+
+    Factors:
+    - Volume relative to minimum (higher = better)
+    - Open interest relative to minimum (higher = better)
+    - Bid-ask spread (lower = better)
+    """
+    # Volume score (0-1)
+    vol_score = min(1.0, volume / (min_volume * 10))
+
+    # OI score (0-1)
+    oi_score = min(1.0, open_interest / (min_oi * 10))
+
+    # Spread score (0-1, lower spread = higher score)
+    # 0% spread = 1.0, 50%+ spread = 0.0
+    spread_score = max(0.0, 1.0 - bid_ask_spread_pct / 50)
+
+    # Weighted average
+    return 0.3 * vol_score + 0.3 * oi_score + 0.4 * spread_score
+
+
+def get_bid_ask_spread_pct(opt: OptionContract) -> float:
+    """Calculate bid-ask spread as percentage of mid price."""
+    if not opt.bid or not opt.ask or opt.ask <= 0:
+        return 100.0  # No valid quotes = 100% spread (unusable)
+
+    mid = (opt.bid + opt.ask) / 2
+    if mid <= 0:
+        return 100.0
+
+    spread = opt.ask - opt.bid
+    return (spread / mid) * 100
 
 
 class MispricingScanner:
     """
     Scans options chains for mispricing opportunities.
+
+    IMPORTANT: Uses EXECUTABLE prices (bid for sells, ask for buys) to avoid
+    false positives from wide bid-ask spreads.
 
     Looks for:
     - Put-call parity violations (risk-free arbitrage)
@@ -62,6 +131,9 @@ class MispricingScanner:
         risk_free_rate: float = 0.05,
         min_edge_pct: float = 5.0,
         min_volume: int = 100,
+        min_open_interest: int = 100,
+        max_spread_pct: float = 25.0,
+        use_executable_prices: bool = True,
     ):
         """
         Initialize scanner.
@@ -69,13 +141,51 @@ class MispricingScanner:
         Args:
             data_provider: Data provider for quotes and chains
             risk_free_rate: Risk-free rate for calculations
-            min_edge_pct: Minimum edge percentage to flag
+            min_edge_pct: Minimum theoretical edge percentage to consider
             min_volume: Minimum option volume to consider
+            min_open_interest: Minimum open interest to consider
+            max_spread_pct: Maximum bid-ask spread as % of mid to consider
+            use_executable_prices: If True, use bid/ask for edge calculation.
+                                   If False, use mid prices (legacy behavior).
         """
         self.provider = data_provider
         self.rate = risk_free_rate
         self.min_edge_pct = min_edge_pct
         self.min_volume = min_volume
+        self.min_open_interest = min_open_interest
+        self.max_spread_pct = max_spread_pct
+        self.use_executable_prices = use_executable_prices
+
+    def _get_executable_price(self, opt: OptionContract, action: str) -> Optional[float]:
+        """
+        Get the executable price for an option.
+
+        Args:
+            opt: The option contract
+            action: 'buy' or 'sell'
+
+        Returns:
+            The executable price (ask for buys, bid for sells)
+        """
+        if action == 'buy':
+            # You pay the ask to buy
+            return opt.ask if opt.ask and opt.ask > 0 else None
+        else:
+            # You receive the bid to sell
+            return opt.bid if opt.bid and opt.bid > 0 else None
+
+    def _passes_liquidity_filter(self, opt: OptionContract) -> bool:
+        """Check if option passes minimum liquidity requirements."""
+        if opt.volume < self.min_volume:
+            return False
+        if opt.open_interest < self.min_open_interest:
+            return False
+
+        spread_pct = get_bid_ask_spread_pct(opt)
+        if spread_pct > self.max_spread_pct:
+            return False
+
+        return True
 
     def scan_symbol(self, symbol: str) -> list[MispricingOpportunity]:
         """
@@ -146,7 +256,7 @@ class MispricingScanner:
                 opportunities.extend(skew_opps)
 
         except Exception as e:
-            print(f"Error scanning {symbol}: {e}")
+            logger.error(f"Error scanning {symbol}: {e}")
 
         return opportunities
 
@@ -159,11 +269,21 @@ class MispricingScanner:
         expiry: str,
     ) -> list[MispricingOpportunity]:
         """
-        Check for put-call parity violations.
+        Check for put-call parity violations using EXECUTABLE prices.
 
         Put-Call Parity: C - P = S - K*e^(-rT)
 
-        If violated, there's a risk-free arbitrage opportunity.
+        For a Conversion (sell call, buy put, buy stock):
+          - Sell call at BID
+          - Buy put at ASK
+          - Buy stock at current price
+
+        For a Reversal (sell put, buy call, short stock):
+          - Sell put at BID
+          - Buy call at ASK
+          - Short stock at current price
+
+        The executable edge must be positive for a real arbitrage.
         """
         opportunities = []
 
@@ -175,13 +295,29 @@ class MispricingScanner:
             call = calls[strike]
             put = puts[strike]
 
-            # Skip low volume
-            if call.volume < self.min_volume or put.volume < self.min_volume:
+            # Calculate spread percentages
+            call_spread_pct = get_bid_ask_spread_pct(call)
+            put_spread_pct = get_bid_ask_spread_pct(put)
+            avg_spread_pct = (call_spread_pct + put_spread_pct) / 2
+
+            # Skip if spreads are too wide
+            if call_spread_pct > self.max_spread_pct or put_spread_pct > self.max_spread_pct:
                 continue
 
-            # Use mid prices
-            call_mid = (call.bid + call.ask) / 2 if call.bid and call.ask else getattr(call, 'last', None) or getattr(call, 'last_price', None)
-            put_mid = (put.bid + put.ask) / 2 if put.bid and put.ask else getattr(put, 'last', None) or getattr(put, 'last_price', None)
+            # Skip low volume/OI
+            if call.volume < self.min_volume or put.volume < self.min_volume:
+                continue
+            if call.open_interest < self.min_open_interest or put.open_interest < self.min_open_interest:
+                continue
+
+            # Get prices
+            call_bid = call.bid if call.bid else 0
+            call_ask = call.ask if call.ask else 0
+            put_bid = put.bid if put.bid else 0
+            put_ask = put.ask if put.ask else 0
+
+            call_mid = (call_bid + call_ask) / 2 if call_bid and call_ask else call.last
+            put_mid = (put_bid + put_ask) / 2 if put_bid and put_ask else put.last
 
             if not call_mid or not put_mid:
                 continue
@@ -189,34 +325,87 @@ class MispricingScanner:
             # Theoretical relationship
             pv_strike = strike * np.exp(-self.rate * time_to_exp)
             theoretical_diff = spot - pv_strike  # C - P should equal this
-            actual_diff = call_mid - put_mid
 
-            parity_violation = actual_diff - theoretical_diff
+            # Calculate violation using MID prices (theoretical)
+            actual_diff_mid = call_mid - put_mid
+            violation_mid = actual_diff_mid - theoretical_diff
 
-            # If violation is significant (> transaction costs)
-            if abs(parity_violation) > 0.10:  # $0.10 threshold
-                edge_pct = (parity_violation / call_mid) * 100
+            # Calculate violation using EXECUTABLE prices
+            # Conversion: sell call (get bid), buy put (pay ask)
+            conversion_diff = call_bid - put_ask
+            conversion_violation = conversion_diff - theoretical_diff
 
-                if abs(edge_pct) >= self.min_edge_pct:
-                    if parity_violation > 0:
-                        # Call overpriced relative to put
-                        trade = f"Sell {symbol} ${strike} Call, Buy ${strike} Put, Buy Stock"
-                    else:
-                        # Put overpriced relative to call
-                        trade = f"Sell {symbol} ${strike} Put, Buy ${strike} Call, Short Stock"
+            # Reversal: sell put (get bid), buy call (pay ask)
+            reversal_diff = call_ask - put_bid
+            reversal_violation = reversal_diff - theoretical_diff
 
-                    opportunities.append(MispricingOpportunity(
-                        symbol=symbol,
-                        opportunity_type="put_call_parity",
-                        description=f"Put-call parity violation at ${strike} strike ({expiry})",
-                        theoretical_value=theoretical_diff,
-                        market_value=actual_diff,
-                        edge=parity_violation,
-                        edge_pct=edge_pct,
-                        confidence=0.9,  # High confidence - mathematical relationship
-                        suggested_trade=trade,
-                        risk_reward=10.0,  # Theoretically risk-free
-                    ))
+            # Determine if there's a real arbitrage
+            has_conversion_arb = conversion_violation > 0.05  # $0.05 min after spreads
+            has_reversal_arb = reversal_violation < -0.05
+
+            # Skip if no executable arbitrage
+            if not has_conversion_arb and not has_reversal_arb:
+                continue
+
+            # Calculate liquidity score
+            combined_volume = call.volume + put.volume
+            combined_oi = call.open_interest + put.open_interest
+            liquidity = calculate_liquidity_score(
+                combined_volume, combined_oi, avg_spread_pct,
+                self.min_volume * 2, self.min_open_interest * 2
+            )
+
+            if has_conversion_arb:
+                # Call overpriced relative to put - do conversion
+                executable_edge = conversion_violation
+                edge_pct_mid = (violation_mid / call_mid) * 100 if call_mid else 0
+                executable_edge_pct = (executable_edge / call_mid) * 100 if call_mid else 0
+                trade = f"CONVERSION: Sell {symbol} ${strike}C @${call_bid:.2f}, Buy ${strike}P @${put_ask:.2f}, Buy Stock"
+
+                opportunities.append(MispricingOpportunity(
+                    symbol=symbol,
+                    opportunity_type="put_call_parity",
+                    description=f"Put-call parity: Conversion at ${strike} ({expiry})",
+                    theoretical_value=theoretical_diff,
+                    market_value=actual_diff_mid,
+                    edge=violation_mid,
+                    edge_pct=edge_pct_mid,
+                    confidence=0.9 if executable_edge > 0.10 else 0.7,
+                    suggested_trade=trade,
+                    risk_reward=10.0 if executable_edge > 0 else 0.0,
+                    executable_edge=executable_edge,
+                    executable_edge_pct=executable_edge_pct,
+                    bid_ask_spread_pct=avg_spread_pct,
+                    volume=combined_volume,
+                    open_interest=combined_oi,
+                    liquidity_score=liquidity,
+                ))
+
+            if has_reversal_arb:
+                # Put overpriced relative to call - do reversal
+                executable_edge = -reversal_violation
+                edge_pct_mid = (violation_mid / put_mid) * 100 if put_mid else 0
+                executable_edge_pct = (executable_edge / put_mid) * 100 if put_mid else 0
+                trade = f"REVERSAL: Sell {symbol} ${strike}P @${put_bid:.2f}, Buy ${strike}C @${call_ask:.2f}, Short Stock"
+
+                opportunities.append(MispricingOpportunity(
+                    symbol=symbol,
+                    opportunity_type="put_call_parity",
+                    description=f"Put-call parity: Reversal at ${strike} ({expiry})",
+                    theoretical_value=theoretical_diff,
+                    market_value=actual_diff_mid,
+                    edge=violation_mid,
+                    edge_pct=edge_pct_mid,
+                    confidence=0.9 if executable_edge > 0.10 else 0.7,
+                    suggested_trade=trade,
+                    risk_reward=10.0 if executable_edge > 0 else 0.0,
+                    executable_edge=executable_edge,
+                    executable_edge_pct=executable_edge_pct,
+                    bid_ask_spread_pct=avg_spread_pct,
+                    volume=combined_volume,
+                    open_interest=combined_oi,
+                    liquidity_score=liquidity,
+                ))
 
         return opportunities
 
@@ -232,13 +421,16 @@ class MispricingScanner:
         """
         Check for IV significantly different from realized volatility.
 
-        - IV << Realized: Options are cheap (buy)
-        - IV >> Realized: Options are expensive (sell)
+        - IV << Realized: Options are cheap (buy at ASK)
+        - IV >> Realized: Options are expensive (sell at BID)
+
+        Accounts for bid-ask spread in determining executable edge.
         """
         opportunities = []
 
         for opt in options:
-            if opt.volume < self.min_volume:
+            # Liquidity filters
+            if not self._passes_liquidity_filter(opt):
                 continue
 
             iv = opt.implied_volatility
@@ -246,57 +438,85 @@ class MispricingScanner:
                 continue
 
             # Calculate IV premium/discount vs realized
-            iv_diff = iv - realized_vol
             iv_ratio = iv / realized_vol if realized_vol > 0 else 1
 
-            # Get mid price
-            mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else getattr(opt, 'last', None) or getattr(opt, 'last_price', None)
-            if not mid:
+            # Get prices
+            mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else opt.last
+            if not mid or mid <= 0:
                 continue
+
+            spread_pct = get_bid_ask_spread_pct(opt)
+            liquidity = calculate_liquidity_score(
+                opt.volume, opt.open_interest, spread_pct,
+                self.min_volume, self.min_open_interest
+            )
 
             # Calculate theoretical value using realized vol
             bs_realized = BlackScholes(spot, opt.strike, self.rate, realized_vol, time_to_exp)
-            bs_market = BlackScholes(spot, opt.strike, self.rate, iv, time_to_exp)
 
             if opt.option_type == 'call':
                 theo_price = bs_realized.call_price()
-                market_price = bs_market.call_price()
             else:
                 theo_price = bs_realized.put_price()
-                market_price = bs_market.put_price()
 
-            edge = theo_price - mid
-            edge_pct = (edge / mid) * 100 if mid > 0 else 0
+            edge_mid = theo_price - mid
+            edge_pct_mid = (edge_mid / mid) * 100 if mid > 0 else 0
 
-            # Significant discount (IV < realized by 20%+)
-            if iv_ratio < 0.80 and abs(edge_pct) >= self.min_edge_pct:
-                opportunities.append(MispricingOpportunity(
-                    symbol=symbol,
-                    opportunity_type="iv_discount",
-                    description=f"{opt.option_type.upper()} ${opt.strike} IV ({iv*100:.0f}%) << Realized ({realized_vol*100:.0f}%)",
-                    theoretical_value=theo_price,
-                    market_value=mid,
-                    edge=edge,
-                    edge_pct=edge_pct,
-                    confidence=0.7,
-                    suggested_trade=f"Buy {symbol} ${opt.strike} {opt.option_type.upper()} ({expiry})",
-                    risk_reward=edge_pct / 20,  # Rough R:R estimate
-                ))
+            # Significant discount (IV < realized by 20%+) - BUY opportunity
+            if iv_ratio < 0.80 and edge_pct_mid >= self.min_edge_pct:
+                # To buy, we pay the ASK
+                buy_price = opt.ask if opt.ask else mid
+                executable_edge = theo_price - buy_price
+                executable_edge_pct = (executable_edge / buy_price) * 100 if buy_price > 0 else 0
 
-            # Significant premium (IV > realized by 50%+)
-            elif iv_ratio > 1.50 and abs(edge_pct) >= self.min_edge_pct:
-                opportunities.append(MispricingOpportunity(
-                    symbol=symbol,
-                    opportunity_type="iv_premium",
-                    description=f"{opt.option_type.upper()} ${opt.strike} IV ({iv*100:.0f}%) >> Realized ({realized_vol*100:.0f}%)",
-                    theoretical_value=theo_price,
-                    market_value=mid,
-                    edge=-edge,  # Negative because we want to sell
-                    edge_pct=-edge_pct,
-                    confidence=0.6,
-                    suggested_trade=f"Sell {symbol} ${opt.strike} {opt.option_type.upper()} ({expiry})",
-                    risk_reward=abs(edge_pct) / 30,
-                ))
+                # Only flag if edge survives the spread
+                if executable_edge_pct >= 2.0:
+                    opportunities.append(MispricingOpportunity(
+                        symbol=symbol,
+                        opportunity_type="iv_discount",
+                        description=f"{opt.option_type.upper()} ${opt.strike} IV ({iv*100:.0f}%) << RV ({realized_vol*100:.0f}%)",
+                        theoretical_value=theo_price,
+                        market_value=mid,
+                        edge=edge_mid,
+                        edge_pct=edge_pct_mid,
+                        confidence=0.7 if executable_edge_pct > 5 else 0.5,
+                        suggested_trade=f"Buy {symbol} ${opt.strike} {opt.option_type.upper()} @${buy_price:.2f} ({expiry})",
+                        risk_reward=executable_edge_pct / 20,
+                        executable_edge=executable_edge,
+                        executable_edge_pct=executable_edge_pct,
+                        bid_ask_spread_pct=spread_pct,
+                        volume=opt.volume,
+                        open_interest=opt.open_interest,
+                        liquidity_score=liquidity,
+                    ))
+
+            # Significant premium (IV > realized by 50%+) - SELL opportunity
+            elif iv_ratio > 1.50 and abs(edge_pct_mid) >= self.min_edge_pct:
+                # To sell, we receive the BID
+                sell_price = opt.bid if opt.bid else mid
+                executable_edge = sell_price - theo_price
+                executable_edge_pct = (executable_edge / sell_price) * 100 if sell_price > 0 else 0
+
+                # Only flag if edge survives the spread
+                if executable_edge_pct >= 2.0:
+                    opportunities.append(MispricingOpportunity(
+                        symbol=symbol,
+                        opportunity_type="iv_premium",
+                        description=f"{opt.option_type.upper()} ${opt.strike} IV ({iv*100:.0f}%) >> RV ({realized_vol*100:.0f}%)",
+                        theoretical_value=theo_price,
+                        market_value=mid,
+                        edge=-edge_mid,
+                        edge_pct=-edge_pct_mid,
+                        confidence=0.6 if executable_edge_pct > 5 else 0.4,
+                        suggested_trade=f"Sell {symbol} ${opt.strike} {opt.option_type.upper()} @${sell_price:.2f} ({expiry})",
+                        risk_reward=executable_edge_pct / 30,
+                        executable_edge=executable_edge,
+                        executable_edge_pct=executable_edge_pct,
+                        bid_ask_spread_pct=spread_pct,
+                        volume=opt.volume,
+                        open_interest=opt.open_interest,
+                        liquidity_score=liquidity,
+                    ))
 
         return opportunities
 
@@ -313,14 +533,16 @@ class MispricingScanner:
 
         Normal skew: OTM puts have higher IV than OTM calls
         Anomaly: Deviation from typical skew pattern
+
+        Only flags opportunities where executable edge survives bid-ask spread.
         """
         opportunities = []
 
-        # Get puts and calls with volume
+        # Get liquid puts and calls
         puts = [o for o in options if o.option_type == 'put'
-                and o.volume >= self.min_volume and o.implied_volatility]
+                and self._passes_liquidity_filter(o) and o.implied_volatility]
         calls = [o for o in options if o.option_type == 'call'
-                 and o.volume >= self.min_volume and o.implied_volatility]
+                 and self._passes_liquidity_filter(o) and o.implied_volatility]
 
         if len(puts) < 3 or len(calls) < 3:
             return opportunities
@@ -336,8 +558,6 @@ class MispricingScanner:
             iv = opt.implied_volatility
 
             # Expected IV based on simple skew model
-            # OTM puts (moneyness < 1): IV should be higher
-            # OTM calls (moneyness > 1): IV should be lower
             if opt.option_type == 'put' and moneyness < 0.95:
                 # OTM put - expect IV premium
                 expected_iv = atm_iv * (1 + 0.1 * (1 - moneyness) / 0.1)
@@ -349,59 +569,80 @@ class MispricingScanner:
 
             iv_deviation = (iv - expected_iv) / expected_iv
 
-            # Flag significant deviations
-            if abs(iv_deviation) > 0.20:  # 20% deviation from expected
-                mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else getattr(opt, 'last', None) or getattr(opt, 'last_price', None)
-                if not mid:
+            # Flag significant deviations (>20%)
+            if abs(iv_deviation) > 0.20:
+                mid = (opt.bid + opt.ask) / 2 if opt.bid and opt.ask else opt.last
+                if not mid or mid <= 0:
                     continue
 
+                spread_pct = get_bid_ask_spread_pct(opt)
+                liquidity = calculate_liquidity_score(
+                    opt.volume, opt.open_interest, spread_pct,
+                    self.min_volume, self.min_open_interest
+                )
+
                 bs_expected = BlackScholes(spot, opt.strike, self.rate, expected_iv, time_to_exp)
-                bs_actual = BlackScholes(spot, opt.strike, self.rate, iv, time_to_exp)
 
                 if opt.option_type == 'call':
                     theo = bs_expected.call_price()
-                    actual = bs_actual.call_price()
                 else:
                     theo = bs_expected.put_price()
-                    actual = bs_actual.put_price()
 
-                edge = theo - mid
-                edge_pct = (edge / mid) * 100 if mid > 0 else 0
+                edge_mid = theo - mid
+                edge_pct_mid = (edge_mid / mid) * 100 if mid > 0 else 0
 
-                if abs(edge_pct) >= self.min_edge_pct:
+                if abs(edge_pct_mid) >= self.min_edge_pct:
                     if iv_deviation < 0:
-                        trade = f"Buy {symbol} ${opt.strike} {opt.option_type.upper()}"
+                        # IV too low - BUY at ask
+                        buy_price = opt.ask if opt.ask else mid
+                        executable_edge = theo - buy_price
+                        executable_edge_pct = (executable_edge / buy_price) * 100 if buy_price > 0 else 0
+                        trade = f"Buy {symbol} ${opt.strike} {opt.option_type.upper()} @${buy_price:.2f}"
                         desc = "IV unusually low for this strike"
                     else:
-                        trade = f"Sell {symbol} ${opt.strike} {opt.option_type.upper()}"
+                        # IV too high - SELL at bid
+                        sell_price = opt.bid if opt.bid else mid
+                        executable_edge = sell_price - theo
+                        executable_edge_pct = (executable_edge / sell_price) * 100 if sell_price > 0 else 0
+                        trade = f"Sell {symbol} ${opt.strike} {opt.option_type.upper()} @${sell_price:.2f}"
                         desc = "IV unusually high for this strike"
 
-                    opportunities.append(MispricingOpportunity(
-                        symbol=symbol,
-                        opportunity_type="skew_anomaly",
-                        description=f"{desc} ({expiry})",
-                        theoretical_value=theo,
-                        market_value=mid,
-                        edge=edge,
-                        edge_pct=edge_pct,
-                        confidence=0.5,
-                        suggested_trade=trade,
-                        risk_reward=abs(edge_pct) / 25,
-                    ))
+                    # Only include if executable edge is meaningful
+                    if executable_edge_pct >= 2.0:
+                        opportunities.append(MispricingOpportunity(
+                            symbol=symbol,
+                            opportunity_type="skew_anomaly",
+                            description=f"{desc} ({expiry})",
+                            theoretical_value=theo,
+                            market_value=mid,
+                            edge=edge_mid,
+                            edge_pct=edge_pct_mid,
+                            confidence=0.5 if executable_edge_pct > 5 else 0.3,
+                            suggested_trade=trade,
+                            risk_reward=abs(executable_edge_pct) / 25,
+                            executable_edge=executable_edge,
+                            executable_edge_pct=executable_edge_pct,
+                            bid_ask_spread_pct=spread_pct,
+                            volume=opt.volume,
+                            open_interest=opt.open_interest,
+                            liquidity_score=liquidity,
+                        ))
 
         return opportunities
 
     def scan_watchlist(
         self,
         symbols: list[str],
-        sort_by: str = "edge_pct",
+        sort_by: str = "executable_edge_pct",
+        actionable_only: bool = True,
     ) -> pd.DataFrame:
         """
         Scan multiple symbols and return sorted opportunities.
 
         Args:
             symbols: List of symbols to scan
-            sort_by: Column to sort by
+            sort_by: Column to sort by (default: executable_edge_pct)
+            actionable_only: If True, only return actionable opportunities
 
         Returns:
             DataFrame of opportunities
@@ -409,8 +650,10 @@ class MispricingScanner:
         all_opportunities = []
 
         for symbol in symbols:
-            print(f"Scanning {symbol}...")
+            logger.info(f"Scanning {symbol}...")
             opps = self.scan_symbol(symbol)
+            if actionable_only:
+                opps = [o for o in opps if o.is_actionable]
             all_opportunities.extend(opps)
 
         if not all_opportunities:
@@ -421,20 +664,24 @@ class MispricingScanner:
                 'symbol': o.symbol,
                 'type': o.opportunity_type,
                 'description': o.description,
-                'edge': o.edge,
-                'edge_pct': o.edge_pct,
+                'theo_edge%': round(o.edge_pct, 1),
+                'exec_edge%': round(o.executable_edge_pct, 1),
+                'spread%': round(o.bid_ask_spread_pct, 1),
+                'liquidity': round(o.liquidity_score, 2),
                 'confidence': o.confidence,
                 'trade': o.suggested_trade,
-                'risk_reward': o.risk_reward,
+                'volume': o.volume,
+                'OI': o.open_interest,
                 'actionable': o.is_actionable,
             }
             for o in all_opportunities
         ])
 
-        # Sort by absolute edge percentage
-        df['abs_edge_pct'] = df['edge_pct'].abs()
-        df = df.sort_values('abs_edge_pct', ascending=False)
-        df = df.drop('abs_edge_pct', axis=1)
+        # Sort by executable edge percentage (absolute value)
+        if 'exec_edge%' in df.columns:
+            df['abs_exec_edge'] = df['exec_edge%'].abs()
+            df = df.sort_values('abs_exec_edge', ascending=False)
+            df = df.drop('abs_exec_edge', axis=1)
 
         return df
 
@@ -443,6 +690,7 @@ class MispricingScanner:
         symbols: list[str],
         top_n: int = 10,
         min_confidence: float = 0.5,
+        require_actionable: bool = True,
     ) -> list[MispricingOpportunity]:
         """
         Get the best opportunities from a watchlist.
@@ -451,17 +699,22 @@ class MispricingScanner:
             symbols: Symbols to scan
             top_n: Number of top opportunities to return
             min_confidence: Minimum confidence threshold
+            require_actionable: If True, only return actionable opportunities
 
         Returns:
-            List of top opportunities
+            List of top opportunities sorted by executable edge
         """
         all_opps = []
 
         for symbol in symbols:
             opps = self.scan_symbol(symbol)
-            all_opps.extend([o for o in opps if o.confidence >= min_confidence])
+            for o in opps:
+                if o.confidence >= min_confidence:
+                    if require_actionable and not o.is_actionable:
+                        continue
+                    all_opps.append(o)
 
-        # Sort by edge percentage
-        all_opps.sort(key=lambda o: abs(o.edge_pct), reverse=True)
+        # Sort by executable edge percentage
+        all_opps.sort(key=lambda o: abs(o.executable_edge_pct), reverse=True)
 
         return all_opps[:top_n]

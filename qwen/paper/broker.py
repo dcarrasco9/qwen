@@ -1,32 +1,13 @@
 """Simulated broker for paper trading."""
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Optional, Callable
-import uuid
+from typing import Callable, Optional
 
-from qwen.paper.account import PaperAccount
 from qwen.config import config
-
-
-class OrderType(Enum):
-    """Order types."""
-
-    MARKET = "market"
-    LIMIT = "limit"
-    STOP = "stop"
-    STOP_LIMIT = "stop_limit"
-
-
-class OrderStatus(Enum):
-    """Order status."""
-
-    PENDING = "pending"
-    FILLED = "filled"
-    PARTIALLY_FILLED = "partially_filled"
-    CANCELLED = "cancelled"
-    REJECTED = "rejected"
+from qwen.paper.account import PaperAccount
+from qwen.types import OrderStatus, OrderType
 
 
 @dataclass
@@ -40,7 +21,7 @@ class Order:
     order_type: OrderType = OrderType.MARKET
     limit_price: Optional[float] = None
     stop_price: Optional[float] = None
-    status: OrderStatus = OrderStatus.PENDING
+    status: OrderStatus = OrderStatus.NEW
     filled_quantity: float = 0
     filled_price: float = 0
     created_at: datetime = field(default_factory=datetime.now)
@@ -168,7 +149,7 @@ class PaperBroker:
         """
         order = self.submit_order(symbol, "buy", quantity, OrderType.MARKET)
 
-        if price and order.status == OrderStatus.PENDING:
+        if price and order.status == OrderStatus.NEW:
             self._execute_order(order, price)
 
         return order
@@ -187,7 +168,7 @@ class PaperBroker:
         """
         order = self.submit_order(symbol, "sell", quantity, OrderType.MARKET)
 
-        if price and order.status == OrderStatus.PENDING:
+        if price and order.status == OrderStatus.NEW:
             self._execute_order(order, price)
 
         return order

@@ -3,7 +3,7 @@
 __version__ = "0.1.0"
 
 from qwen.config import Config
-from qwen.watchlist import (
+from qwen.data.watchlist import (
     Watchlist,
     WatchlistStock,
     Sector,

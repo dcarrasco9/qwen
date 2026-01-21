@@ -1,4 +1,18 @@
-"""Schwab/TD Ameritrade data provider (placeholder for API integration)."""
+"""
+Schwab/TD Ameritrade data provider.
+
+WARNING: NOT FULLY IMPLEMENTED
+==============================
+This module is a PLACEHOLDER for future Schwab API integration.
+All methods raise NotImplementedError.
+
+Use YahooDataProvider or AlpacaDataProvider instead for working implementations.
+
+Implementation Requirements:
+- schwab-py package
+- OAuth authentication flow (requires user interaction)
+- Token storage and refresh logic
+"""
 
 from datetime import datetime
 from typing import Optional
@@ -13,13 +27,20 @@ class SchwabDataProvider(DataProvider):
     """
     Data provider using Schwab/TD Ameritrade API.
 
-    Requires schwab-py package and API credentials configured via environment variables:
-    - SCHWAB_API_KEY
-    - SCHWAB_API_SECRET
-    - SCHWAB_CALLBACK_URL
+    WARNING: NOT IMPLEMENTED - This is a placeholder class.
+    ========================================================
 
-    Note: This is a placeholder implementation. Full implementation requires
-    OAuth authentication flow with Schwab's API.
+    All methods will raise NotImplementedError. For working data providers, use:
+    - YahooDataProvider (free, no API key required)
+    - AlpacaDataProvider (requires Alpaca API key)
+
+    Future Implementation Notes:
+    - Requires schwab-py package
+    - Requires OAuth authentication flow with Schwab's API
+    - Credentials via environment variables:
+        - SCHWAB_API_KEY
+        - SCHWAB_API_SECRET
+        - SCHWAB_CALLBACK_URL
     """
 
     def __init__(self):

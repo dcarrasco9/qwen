@@ -3,38 +3,22 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Literal
-from enum import Enum
+from typing import Literal, Optional
 
+# Import canonical types from unified types module
+from qwen.types import AssetClass, OrderSide, OrderStatus, OrderType
 
-class OrderSide(Enum):
-    BUY = "buy"
-    SELL = "sell"
-
-
-class OrderType(Enum):
-    MARKET = "market"
-    LIMIT = "limit"
-    STOP = "stop"
-    STOP_LIMIT = "stop_limit"
-    TRAILING_STOP = "trailing_stop"
-
-
-class OrderStatus(Enum):
-    NEW = "new"
-    PENDING = "pending_new"
-    ACCEPTED = "accepted"
-    FILLED = "filled"
-    PARTIALLY_FILLED = "partially_filled"
-    CANCELED = "canceled"
-    EXPIRED = "expired"
-    REJECTED = "rejected"
-
-
-class AssetClass(Enum):
-    STOCK = "us_equity"
-    CRYPTO = "crypto"
-    OPTION = "us_option"
+# Re-export for backward compatibility
+__all__ = [
+    "OrderSide",
+    "OrderType",
+    "OrderStatus",
+    "AssetClass",
+    "BrokerOrder",
+    "BrokerPosition",
+    "AccountInfo",
+    "BaseBroker",
+]
 
 
 @dataclass

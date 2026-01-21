@@ -5,6 +5,48 @@ import pandas as pd
 from typing import Union
 
 
+def safe_float(val, default: float = 0.0) -> float:
+    """
+    Safely convert a value to float, handling NaN and None.
+
+    Args:
+        val: Value to convert
+        default: Default value if conversion fails
+
+    Returns:
+        Float value or default
+    """
+    if val is None:
+        return default
+    if pd.isna(val):
+        return default
+    try:
+        return float(val) if val else default
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_int(val, default: int = 0) -> int:
+    """
+    Safely convert a value to int, handling NaN and None.
+
+    Args:
+        val: Value to convert
+        default: Default value if conversion fails
+
+    Returns:
+        Int value or default
+    """
+    if val is None:
+        return default
+    if pd.isna(val):
+        return default
+    try:
+        return int(val) if val else default
+    except (ValueError, TypeError):
+        return default
+
+
 def annualize_returns(returns: Union[pd.Series, np.ndarray], periods_per_year: int = 252) -> float:
     """
     Annualize returns from a series of periodic returns.

@@ -3,7 +3,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Any
+from typing import Any, Optional
+
 import pandas as pd
 
 
@@ -16,7 +17,7 @@ class Signal:
     quantity: Optional[float] = None  # None means use position sizing
     price: Optional[float] = None  # None means market order
     reason: str = ""
-    metadata: dict = None
+    metadata: Optional[dict[str, Any]] = None
 
     def __post_init__(self):
         if self.metadata is None:

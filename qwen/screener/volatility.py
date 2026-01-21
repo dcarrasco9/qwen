@@ -5,13 +5,17 @@ Analyzes volatility regimes, term structure, and identifies
 opportunities based on volatility patterns.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
+
 import numpy as np
 import pandas as pd
 
 from qwen.data.base import DataProvider
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -92,7 +96,7 @@ class VolatilityAnalyzer:
                     current_iv = current_rv * 1.1  # Estimate
             else:
                 current_iv = current_rv * 1.1
-        except:
+        except Exception:
             current_iv = current_rv * 1.1
 
         # Calculate IV percentile (using RV as proxy if no historical IV)
@@ -194,7 +198,7 @@ class VolatilityAnalyzer:
                     'recommendation': regime.recommendation,
                 })
             except Exception as e:
-                print(f"Error analyzing {symbol}: {e}")
+                logger.warning(f"Error analyzing {symbol}: {e}")
 
         df = pd.DataFrame(results)
 
